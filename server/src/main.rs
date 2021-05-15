@@ -18,6 +18,34 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::time;
 use tokio_native_tls::native_tls::{Identity, TlsAcceptor};
 
+#[cfg(feature = "notify")]
+use notify_rust::Notification;
+
+macro_rules! log_error {
+    ($($tts:tt)*) => {
+        log::error!($($tts)*);
+
+        #[cfg(feature = "notify")]
+        Notification::new()
+            .summary("rkvm error")
+            .body(format!($($tts)*).as_str())
+            .show().unwrap();
+    }
+}
+
+macro_rules! log_info {
+    ($($tts:tt)*) => {
+        log::info!($($tts)*);
+
+        #[cfg(feature = "notify")]
+        Notification::new()
+            .summary("rkvm info")
+            .body(format!($($tts)*).as_str())
+            .show().unwrap();
+    }
+}
+
+
 async fn handle_connection<T>(
     mut stream: T,
     mut receiver: UnboundedReceiver<Event>,
@@ -69,7 +97,7 @@ async fn run(
         .map(Into::into)?;
     let listener = TcpListener::bind(listen_address).await?;
 
-    log::info!("Listening on {}", listen_address);
+    log_info!("Listening on {}", listen_address);
 
     let (client_sender, mut client_receiver) = mpsc::unbounded_channel();
     tokio::spawn(async move {
@@ -85,7 +113,7 @@ async fn run(
             let stream = match acceptor.accept(stream).await {
                 Ok(stream) => stream,
                 Err(err) => {
-                    log::error!("{}: TLS error: {}", address, err);
+                    log_error!("{}: TLS error: {}", address, err);
                     continue;
                 }
             };
@@ -96,13 +124,14 @@ async fn run(
             }
 
             tokio::spawn(async move {
-                log::info!("{}: connected", address);
+                log_info!("{}: connected", address);
+
                 let message = handle_connection(stream, receiver)
                     .await
                     .err()
                     .map(|err| format!(" ({})", err))
                     .unwrap_or_else(String::new);
-                log::info!("{}: disconnected{}", address, message);
+                log_info!("{}: disconnected{}", address, message);
             });
         }
     });
@@ -132,7 +161,7 @@ async fn run(
                     }
 
                     current = (current + 1) % (clients.len() + 1);
-                    log::info!("Switching to client {}", current);
+                    log_info!("Switching to client {}", current);
                     continue;
                 }
 
@@ -181,7 +210,7 @@ async fn main() {
     let config = match fs::read_to_string(&args.config_path).await {
         Ok(config) => config,
         Err(err) => {
-            log::error!("Error loading config: {}", err);
+            log_error!("Error loading config: {}", err);
             process::exit(1);
         }
     };
@@ -189,7 +218,7 @@ async fn main() {
     let config: Config = match toml::from_str(&config) {
         Ok(config) => config,
         Err(err) => {
-            log::error!("Error parsing config: {}", err);
+            log_error!("Error parsing config: {}", err);
             process::exit(1);
         }
     };
@@ -197,17 +226,17 @@ async fn main() {
     tokio::select! {
         result = run(config.listen_address, &config.switch_keys, &config.identity_path, &config.identity_password) => {
             if let Err(err) = result {
-                log::error!("Error: {:#}", err);
+                log_error!("Error: {:#}", err);
                 process::exit(1);
             }
         }
         result = tokio::signal::ctrl_c() => {
             if let Err(err) = result {
-                log::error!("Error setting up signal handler: {}", err);
+                log_error!("Error setting up signal handler: {}", err);
                 process::exit(1);
             }
 
-            log::info!("Exiting on signal");
+            log_info!("Exiting on signal");
         }
     }
 }
